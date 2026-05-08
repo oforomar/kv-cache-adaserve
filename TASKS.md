@@ -40,8 +40,19 @@ Follow-on changes landed with this task:
 
 Three independent tracks. Each runner needs: a uv project under `backends/runners/<name>_env/`, real model loading via the upstream submodule, per-prompt teacher-forced perplexity, compression-ratio reporting, JSONL output.
 
-### 4a. Ada-KV (`backends/runners/run_adakv.py`)
-Closest to a library — head-adaptive eviction is a relatively clean wrapper. Probably the best starting point for proving the per-backend env pattern works. Decide `main` vs `gqa_support` branch first (see task #3).
+### 4a. Ada-KV (`backends/runners/run_adakv.py`) — **DONE pending GPU validation**
+
+Implemented:
+- Env `backends/runners/adakv_env/` with `transformers==4.44.2`, `torch>=2.2`, the AdaKV submodule as an editable path source, and a note about installing flash-attn separately (`--no-build-isolation`).
+- Runner uses `replace_llama_adaptive()` + `config_compress(...)` with `gqa_support=True`, `gqa_func="mean"` (Llama-3.1 GQA).
+- Two-step perplexity: prefill the prompt (eviction fires inside the patched attention forward when `seq_len > base_capacity`), then teacher-force `target_text` token-by-token against the post-eviction KV cache.
+- `cratio = min(1.0, base_capacity / max(prompt_len, 1))` — AdaKV's design ratio.
+- CLI exposes `--base-capacity`, `--window-size`, `--kernel-size`, `--floor-alpha`, `--max-length`, `--device`.
+
+Open follow-ups (need GPU + HF auth to validate):
+- Confirm the AdaKV submodule installs cleanly via `uv sync --project backends/runners/adakv_env`. The submodule's own `pyproject.toml` strictly pins `numpy==1.24.0` and `tqdm==4.66.1` — if those clash with anything else, relax via uv's override.
+- Run a sanity check on ~5 prompts and verify the output JSONL has plausible ppl (close to baseline at `base_capacity ≥ seq_len`, higher when `base_capacity « seq_len`).
+- The two-step perplexity loop runs decode autoregressively (one forward per target token). For 128-token targets × 1850 prompts that's ~237K extra forwards — measure the actual time on H100; if it's a meaningful fraction of total budget, batch the target-side forwards.
 
 ### 4b. KVQuant (`backends/runners/run_kvquant.py`)
 Has custom CUDA kernels under `backends/kvquant/quant/`. Building the kernels against a specific torch ABI is the env's main constraint. Upstream has a documented eval pipeline; lift it into the per-prompt loop. Single runner emits both `kvquant_8b.jsonl` and `kvquant_3b.jsonl` via `--bitwidth`.

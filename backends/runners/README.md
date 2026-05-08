@@ -36,7 +36,29 @@ uv run --project backends/runners/kvquant_env python backends/runners/run_kvquan
 
 ## Status
 
-All three runners are skeletons — they raise `NotImplementedError` at the model-loading step. Filling them in is per-backend work: read the upstream README, find the entrypoint that fits "load model with compressor active, compute perplexity per prompt", wire it up.
+- **`run_adakv.py`** — implemented. Uses upstream `replace_llama_adaptive` + `config_compress`; two-step perplexity (prefill prompt → score target against post-eviction cache). Env: `backends/runners/adakv_env/` with `transformers==4.44.2` and the AdaKV submodule as an editable path source.
+- **`run_kvquant.py`** — skeleton; raises `NotImplementedError`.
+- **`run_dynamickv.py`** — skeleton; raises `NotImplementedError`.
+
+### Setting up the AdaKV env
+
+```bash
+# from repo root
+uv sync --project backends/runners/adakv_env
+
+# flash-attn must be built against the installed torch ABI:
+uv pip install --project backends/runners/adakv_env flash-attn --no-build-isolation
+```
+
+Then run a smoke check on a few prompts:
+
+```bash
+uv run --project backends/runners/adakv_env python backends/runners/run_adakv.py \
+    --model meta-llama/Llama-3.1-8B \
+    --prompts prompts.jsonl --out adakv.jsonl --base-capacity 1024
+```
+
+The `gqa_support=True` + `gqa_func="mean"` flags are baked in — required for Llama-3.1-8B (32 Q / 8 KV heads). To target a different model, adjust those defaults.
 
 ## Production sequence (once the runners are real)
 
