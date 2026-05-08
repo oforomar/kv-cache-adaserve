@@ -4,23 +4,34 @@ version = "0.0.1"
 description = "Per-backend runner env for KVQuant. Hosts the simquant evaluation path."
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.2",
-    "transformers>=4.40",
+    "torch==2.5.1",
+    # 4.45+ understands Llama-3.2's `rope_type: 'llama3'` rope_scaling format.
+    # Bumping past 4.36 means we can't use the deprecated
+    # `use_flash_attention_2=True` kwarg KVQuant's llama_simquant.py uses,
+    # so our calibration wrapper (run_kvquant_calibrate.py) reimplements
+    # the model load with the modern `attn_implementation` kwarg instead.
+    "transformers>=4.45,<4.46",
     "accelerate>=0.33",
     "datasets>=2.20",
     "scikit-learn>=1.3",       # KVQuant uses k-means via sklearn
     "sentencepiece>=0.2",
     "numpy>=1.24",
     "tqdm>=4.66",
-    # KVQuant's quant subpackage, vendored as a git submodule.
+    "einops>=0.8",
+    "matplotlib>=3.7",         # transitive dep of kvquant.modelutils
     "kvquant",
-    # flash-attn must be built against the installed torch ABI:
-    #   uv pip install flash-attn --no-build-isolation
-    # (Optional — the runner falls back to eager attention if FA isn't available.)
+    "flash-attn",
 ]
 
 [tool.uv]
 package = false
 
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
 [tool.uv.sources]
 kvquant = { path = "../../kvquant/quant", editable = true }
+torch = { index = "pytorch-cu121" }
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" }

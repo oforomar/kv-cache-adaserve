@@ -56,20 +56,28 @@ Open follow-ups (need GPU + HF auth to validate):
 - Run a sanity check on ~5 prompts and verify the output JSONL has plausible ppl (close to baseline at `base_capacity ≥ seq_len`, higher when `base_capacity « seq_len`).
 - The two-step perplexity loop runs decode autoregressively (one forward per target token). For 128-token targets × 1850 prompts that's ~237K extra forwards — measure the actual time on H100; if it's a meaningful fraction of total budget, batch the target-side forwards.
 
-### 4b. KVQuant (`backends/runners/run_kvquant.py`) — **DONE pending GPU validation + offline prep**
+### 4b. KVQuant (`backends/runners/run_kvquant.py`) — **DONE**
 
-Implemented:
-- Env `backends/runners/kvquant_env/` with KVQuant submodule (`backends/kvquant/quant`) as editable path source.
-- Runner uses `kvquant.simquant_module_quantizer.make_quant_sim` to patch K/V projections (per-channel for `k_proj`, per-token + dynamic for `v_proj`); falls back from flash-attn to eager if FA isn't built.
-- Per-prompt teacher-forced perplexity, standard pattern (no two-step needed; quantization is in the patched projections).
-- Bitwidth mapping: `--bitwidth 8 → KVQuant 4-bit`, `--bitwidth 3 → 3-bit`. KVQuant has no native 8-bit; 4-bit is the closest "light-compression" point. `cratio = abits / 16`.
-- CLI exposes NUQ on/off, NormalFloat NUQ, sparsity threshold, attention-sink fp16-prefix, max-length.
+Pipeline:
+- Env `backends/runners/kvquant_env/` with torch 2.5.1+cu121, transformers >=4.45 (Llama-3.2 RoPE compat), KVQuant submodule editable, flash-attn URL-pinned. Python 3.11 via uv-managed.
+- Runner uses `kvquant.simquant_module_quantizer.make_quant_sim` to patch K/V projections (per-channel for `k_proj`, per-token + dynamic for `v_proj`).
+- Per-prompt teacher-forced perplexity (standard pattern; quantization is in the patched projections, no special pattern needed).
+- Bitwidth mapping: `--bitwidth 8 → KVQuant 4-bit`, `--bitwidth 3 → 3-bit`. cratio = abits / 16.
 
-**Critical prerequisite (cannot be automated):** the user must run KVQuant's upstream Fisher-info pipeline + `llama_simquant.py --quantize` once per bitwidth, producing `quantizers_4bit.pickle` and `quantizers_3bit.pickle`. See `backends/runners/kvquant_env/README.md` for the prep CLI. This calibration is hours of mostly-CPU work.
+**Offline pre-calibration script: `backends/runners/run_kvquant_calibrate.py`** — produces `quantizers_<N>bit.pickle` per bitwidth. Wraps upstream's `llama_calibration` with three patches:
+- Replace `get_model` to use `attn_implementation="flash_attention_2"` instead of the deprecated `use_flash_attention_2=True` kwarg (removed in transformers 4.36+).
+- Inject a fake `args.nsamples` namespace into the `llama_simquant` module — the upstream function references it as a global without taking it as a parameter (upstream bug).
+- Patch `LlamaDecoderLayer.forward` to lazily compute `position_embeddings` if not supplied. Modern Llama-3 keeps `rotary_emb` at the model level; KVQuant's CPU-offload calibration calls layers directly without `position_embeddings`, hitting a device-mismatch on the layer's fallback path. Plus we move `model.model.rotary_emb` to GPU for the initial Catcher pass.
 
-Open follow-ups (need GPU + the prep pickles):
-- Verify the runner finds and applies the pickle without errors against Llama-3.1-8B.
-- The `--first-few-fp16` attention-sink option may improve quality at low bitwidths; sweep on a small set after validation.
+We deliberately skip upstream's Fisher-info `gradients/` pipeline (a separate transformers fork). KVQuant accepts `fisher=None` — non-fisher-weighted NUQ codebooks are slightly lower quality but a valid calibration. Saves hours of CPU work on a separate env.
+
+Calibration time: ~12-15 min per bitwidth on a 16GB laptop GPU for Llama-3.2-3B (28 layers × 2 projections × k-means clustering). Pickle size: ~7.6MB.
+
+Smoke results (5 wikitext-short prompts, baselines 8.1-23.9):
+- KVQuant 4-bit ppl 8.14, 13.90, 16.33, 24.39, 11.82 — **Δppl ≤ 0.50, often ~0** at cratio 0.25
+- KVQuant 3-bit ppl 8.35, 14.18, 16.61, 25.27, 12.19 — Δppl ~0.5 at cratio 0.1875
+
+KVQuant produces noticeably better quality-vs-compression tradeoff than DynamicKV/AdaKV at these settings — wins 4/5 argmaxes at λ=1.0.
 
 ### 4c. DynamicKV (`backends/runners/run_dynamickv.py`) — **DONE pending GPU validation**
 
