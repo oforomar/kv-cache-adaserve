@@ -30,12 +30,17 @@ def attention_entropy(weights: torch.Tensor) -> torch.Tensor:
     weights: [B, H, q, k] from an HF attention module with output_attentions=True.
     Returns a [B, H, q] tensor; callers typically `.mean()` to a scalar.
 
-    Cast to fp32 first: fp16's smallest subnormal is ~6e-8, so a 1e-12
-    clamp underflows to 0 there and propagates NaN through `0 * log(0)`.
+    Chunked by head: the fp32 cast (needed because fp16's smallest subnormal
+    is ~6e-8 and a 1e-12 clamp would underflow to 0, propagating NaN through
+    `0 * log(0)`) doubles memory; on a long prompt (q=k=8K, H=24, fp16) the
+    full-tensor cast is ~6 GB. Per-head pass is ~256 MB peak.
     """
     eps = 1e-12
-    p = weights.float().clamp_min(eps)
-    return -(p * p.log()).sum(dim=-1)
+    out = []
+    for h in range(weights.shape[1]):
+        p = weights[:, h:h + 1].float().clamp_min(eps)
+        out.append(-(p * p.log()).sum(dim=-1))
+    return torch.cat(out, dim=1)
 
 
 def head_variance(weights: torch.Tensor, num_kv_groups: int = 1) -> torch.Tensor:

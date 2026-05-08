@@ -53,9 +53,11 @@ def install_hooks(model) -> tuple[list, dict[int, dict]]:
             def hook(module, args, kwargs, output):
                 # HF returns (attn_output, attn_weights, past_kv) when
                 # output_attentions=True. attn_weights: [B, Hq, q, k].
-                weights = output[1] if isinstance(output, tuple) else None
+                if not isinstance(output, tuple):
+                    return output
+                weights = output[1]
                 if weights is None:
-                    return
+                    return output
                 with torch.no_grad():
                     H = attention_entropy(weights).mean().item()
                     V = head_variance(weights, num_kv_groups=kv_groups).item()
@@ -65,6 +67,11 @@ def install_hooks(model) -> tuple[list, dict[int, dict]]:
                     "head_variance": V,
                     "seq_len": seq_len,
                 }
+                # Replace attn_weights with None in the returned tuple so HF's
+                # output_attentions stack doesn't accumulate 28 layers' worth
+                # of [B, H, q, k] tensors. At q=k=4096, H=24 that's ~6 GB
+                # per layer; on a 16 GB card, accumulating all of them OOMs.
+                return (output[0], None) + tuple(output[2:])
             return hook
 
         handles.append(
