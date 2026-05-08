@@ -1,0 +1,9 @@
+[submodule "backends/kvquant"]
+	path = backends/kvquant
+	url = https://github.com/SqueezeAILab/KVQuant.git
+[submodule "backends/dynamickv"]
+	path = backends/dynamickv
+	url = https://github.com/DreamMr/DynamicKV.git
+[submodule "backends/adakv"]
+	path = backends/adakv
+	url = https://github.com/FFY0/AdaKV.git
