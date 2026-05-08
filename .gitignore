@@ -9,6 +9,9 @@ uv.lock.lock
 # Pipeline outputs
 *.jsonl
 !**/fixtures/*.jsonl
+*.pickle
+smoke/
+calib*/
 
 # Editor / OS
 .vscode/
