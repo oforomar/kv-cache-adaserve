@@ -31,8 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from selector import HeuristicConfig, select_phase_a   # noqa: E402
 from signals import LayerSignals                        # noqa: E402
-from strategies import Strategy                         # noqa: E402
-from calibration.prompts import read_prompts            # noqa: E402
+from strategies import REGISTRY, Strategy               # noqa: E402
+from calibration.prompts import Prompt, read_prompts    # noqa: E402
 
 # QAQ excluded from the runtime classifier — see design notes.
 RUNTIME_STRATEGIES = [
@@ -51,17 +51,98 @@ def score(ppl_baseline: float, ppl_strategy: float, cratio: float,
 
 
 # ---------------------------------------------------------------------------
-# Real measurement path — fill in the backend adapters.
+# Real measurement path
 # ---------------------------------------------------------------------------
 
+def perplexity(model, tokenizer, prompt_text: str, target_text: str,
+               device: str, max_length: int) -> float:
+    """Teacher-forced perplexity of `target_text` conditioned on `prompt_text`.
+
+    The prompt portion is masked from the loss (labels = -100), so we measure
+    only the model's likelihood on the held-out continuation.
+    """
+    import torch
+    prompt_ids = tokenizer(
+        prompt_text, return_tensors="pt", truncation=True, max_length=max_length
+    ).input_ids.to(device)
+    target_ids = tokenizer(
+        target_text, return_tensors="pt", add_special_tokens=False
+    ).input_ids.to(device)
+
+    input_ids = torch.cat([prompt_ids, target_ids], dim=1)
+    if input_ids.shape[1] > max_length:
+        # Trim the prompt's leading tokens; never trim the target.
+        overflow = input_ids.shape[1] - max_length
+        input_ids = input_ids[:, overflow:]
+        prompt_len = max(0, prompt_ids.shape[1] - overflow)
+    else:
+        prompt_len = prompt_ids.shape[1]
+
+    labels = input_ids.clone()
+    labels[:, :prompt_len] = -100
+
+    with torch.inference_mode():
+        out = model(input_ids=input_ids, labels=labels, use_cache=False)
+    return math.exp(out.loss.item())
+
+
 def measure_real(model_name: str, prompts_path: str, out_path: str,
-                 lambda_compress: float = 1.0, device: str = "cuda") -> int:
-    raise NotImplementedError(
-        "Wire your KV-cache backends into this function: for each strategy, "
-        "patch the model's attention so K/V are encoded/decoded by the "
-        "strategy, then call the standard perplexity loop on the prompt's "
-        "target_text. Use strategies.REGISTRY to plug adapters in."
-    )
+                 lambda_compress: float = 1.0, device: str = "cuda",
+                 max_length: int = 8192) -> int:
+    """Run baseline + each strategy on every prompt, pick winner per prompt.
+
+    Each output row carries the per-strategy (ppl, cratio, score) so that the
+    same measurements can be relabeled later under a different λ without
+    re-running the model — the relabeling is just a `score()` recompute.
+
+    Strategies are applied via `strategies.REGISTRY` adapters: each adapter is
+    a context manager that patches the model's K/V handling on enter and
+    yields the strategy's compression ratio. Adapters are stubbed by default;
+    register real ones before calling this in production.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(model_name)
+    if tok.pad_token_id is None:
+        tok.pad_token = tok.eos_token
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, torch_dtype=torch.float16
+    ).to(device).eval()
+    num_layers = model.config.num_hidden_layers
+
+    prompts = read_prompts(prompts_path)
+    n_written = 0
+    with open(out_path, "w") as f:
+        for p in prompts:
+            ppl_baseline = perplexity(
+                model, tok, p.text, p.target_text, device, max_length
+            )
+
+            scores: dict[str, dict[str, float]] = {}
+            for strat in RUNTIME_STRATEGIES:
+                adapter = REGISTRY[strat]
+                with adapter(model) as cratio:
+                    ppl_s = perplexity(
+                        model, tok, p.text, p.target_text, device, max_length
+                    )
+                scores[strat.value] = {
+                    "ppl": ppl_s,
+                    "cratio": cratio,
+                    "score": score(ppl_baseline, ppl_s, cratio, lambda_compress),
+                }
+
+            label = max(scores, key=lambda k: scores[k]["score"])
+            f.write(json.dumps({
+                "prompt_id": p.id,
+                "label": label,
+                "ppl_baseline": ppl_baseline,
+                "scores": scores,
+                "lambda_compress": lambda_compress,
+                "num_layers": num_layers,
+            }) + "\n")
+            n_written += 1
+    return n_written
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +207,8 @@ if __name__ == "__main__":
                     help="label via Phase A heuristic instead of real measurement")
     ap.add_argument("--model", help="(real mode) HF model id")
     ap.add_argument("--lambda-compress", type=float, default=1.0)
+    ap.add_argument("--max-length", type=int, default=8192)
+    ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
     if args.mock:
@@ -134,5 +217,7 @@ if __name__ == "__main__":
         if not args.model:
             raise SystemExit("--model is required without --mock")
         n = measure_real(args.model, args.prompts, args.out,
-                         args.lambda_compress)
+                         lambda_compress=args.lambda_compress,
+                         device=args.device,
+                         max_length=args.max_length)
     print(f"wrote {n} measurement rows → {args.out}")
