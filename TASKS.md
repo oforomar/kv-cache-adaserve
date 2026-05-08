@@ -23,14 +23,15 @@ Smoke-tested the pooler with a fake tokenizer + iterator: bucket counts honored,
 
 ---
 
-## 3. Pick the calibration target model
-**Status:** open · **Blocks:** task #4 · **Effort:** decision
+## 3. Pick the calibration target model — **DONE**
 
-Choose the 7B-class model (Llama-2-7B? Llama-3-8B? Mistral-7B?). This decides:
+**Choice: `meta-llama/Llama-3.1-8B`.** GQA (32 Q-heads / 8 KV-heads, group size 4), 128K native context — the xlong bucket actually exercises the model. Gated on HF Hub; the user needs to accept the license and `huggingface-cli login` before any GPU stage.
 
-- Whether AdaKV's `gqa_support` branch is required (yes for Llama-3, Mistral, Qwen — most modern 7B-class models use GQA).
-- Per-backend env pins (each backend supports a different transformers/torch range).
-- Whether the GQA `head_variance` issue (CLAUDE.md "What's NOT done yet" #4) needs to be fixed before signal collection or can be deferred.
+Follow-on changes landed with this task:
+
+- **AdaKV submodule switched to `gqa_support` branch** (commit `1c1d99a3`) — required for any GQA-aware compressor work.
+- **`signals.head_variance` is now GQA-aware**: takes `num_kv_groups` (defaults to 1 = MHA, no behavior change), folds adjacent Q-heads into KV-head groups by averaging the per-head peak statistic, then takes variance across KV-heads. `collect_signals.install_hooks` reads `attn.num_key_value_groups` from each Llama-family attention module and threads it through. Smoke-tested: MHA case unchanged; GQA folded variance < unfolded, matching expectations.
+- `tau_head_var = 1e-4` was tuned against the unfolded statistic; expect it to need adjustment on real Llama-3.1 signals (already tracked under "Lower-priority cleanups").
 
 ---
 
@@ -79,5 +80,5 @@ Consumes `training.jsonl`. Documented separately. Listed here only so it doesn't
 ## Lower-priority cleanups
 
 - **`signals.head_variance` statistic choice.** Currently cross-head variance of mean peak attention probability — placeholder pick. The exact statistic affects `tau_head_var` calibration. Re-tune on real signals before any production labeling run.
-- **GQA-aware `head_variance`.** Operates on Q-heads (post-repetition) today; the doc calls for KV-heads. With GQA models, group Q-heads by `num_key_value_groups` first. Probably tied to task #3.
+- ~~**GQA-aware `head_variance`.**~~ Done as part of task 3.
 - **Cleanup `tau_*` thresholds in `selector.HeuristicConfig`.** The defaults (`tau_head_var=1e-4`, etc.) are educated guesses. Recalibrate against the first real signals batch.

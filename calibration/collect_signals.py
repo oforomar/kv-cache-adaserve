@@ -45,8 +45,11 @@ def install_hooks(model) -> tuple[list, dict[int, dict]]:
 
     for idx, layer in enumerate(layers):
         attn = layer.self_attn
+        # GQA: HF Llama/Mistral/Qwen attention modules expose this directly.
+        # Defaults to 1 (MHA) for older or non-GQA architectures.
+        n_kv_groups = getattr(attn, "num_key_value_groups", 1)
 
-        def make_hook(layer_idx: int):
+        def make_hook(layer_idx: int, kv_groups: int):
             def hook(module, args, kwargs, output):
                 # HF returns (attn_output, attn_weights, past_kv) when
                 # output_attentions=True. attn_weights: [B, Hq, q, k].
@@ -55,7 +58,7 @@ def install_hooks(model) -> tuple[list, dict[int, dict]]:
                     return
                 with torch.no_grad():
                     H = attention_entropy(weights).mean().item()
-                    V = head_variance(weights).item()
+                    V = head_variance(weights, num_kv_groups=kv_groups).item()
                     seq_len = int(weights.shape[-1])
                 results[layer_idx] = {
                     "entropy": H,
@@ -65,7 +68,9 @@ def install_hooks(model) -> tuple[list, dict[int, dict]]:
             return hook
 
         handles.append(
-            attn.register_forward_hook(make_hook(idx), with_kwargs=True)
+            attn.register_forward_hook(
+                make_hook(idx, n_kv_groups), with_kwargs=True
+            )
         )
     return handles, results
 

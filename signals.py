@@ -35,21 +35,34 @@ def attention_entropy(weights: torch.Tensor) -> torch.Tensor:
     return -(p * p.log()).sum(dim=-1)
 
 
-def head_variance(weights: torch.Tensor) -> torch.Tensor:
-    """Cross-head heterogeneity: variance across heads of per-head peak attention.
+def head_variance(weights: torch.Tensor, num_kv_groups: int = 1) -> torch.Tensor:
+    """Cross-head heterogeneity: variance across KV heads of per-head peak attention.
 
-    weights: [B, H, q, k]. Returns a 0-d tensor.
+    weights: [B, num_q_heads, q, k]. Returns a 0-d tensor.
 
-    Many "head variance" definitions are reasonable. We use the variance across
-    heads of each head's mean peak (max over keys) attention probability:
-    peaky heads → high mean-max, diffuse heads → low. Variance captures how
-    heterogeneously peaked the heads are. The exact statistic affects
+    HF returns attention weights post K/V repetition, so the head axis is
+    Q-heads. The design doc calls for variance over KV heads. With GQA we
+    fold every `num_kv_groups` adjacent Q-heads into one KV-head value
+    (average their peak-attention statistic) before taking the variance.
+    For MHA (num_kv_groups=1) the fold is a no-op and behavior matches
+    "variance across all heads".
+
+    The statistic per head is the mean-over-(batch, query) of the row's
+    peak-key probability — peaky heads → high, diffuse heads → low.
+    Variance across (folded) heads captures how heterogeneously peaked
+    the KV-head groups are. The exact statistic affects
     `HeuristicConfig.tau_head_var` calibration — keep them consistent.
-
-    Note on GQA: HF returns weights post K/V repetition, so the head axis is
-    Q-heads, not KV-heads. The design doc calls for variance over KV heads;
-    with GQA, group adjacent Q-heads using `num_key_value_groups` before
-    taking the variance. Not done here — flag for the GQA-specific run.
     """
-    per_head_peak = weights.amax(dim=-1).mean(dim=(0, 2))  # [H]
-    return per_head_peak.var(unbiased=False)
+    per_q_head_peak = weights.amax(dim=-1).mean(dim=(0, 2))  # [num_q_heads]
+    if num_kv_groups > 1:
+        n_q = per_q_head_peak.shape[0]
+        if n_q % num_kv_groups != 0:
+            raise ValueError(
+                f"num_q_heads ({n_q}) not divisible by num_kv_groups "
+                f"({num_kv_groups})"
+            )
+        n_kv = n_q // num_kv_groups
+        per_kv_head = per_q_head_peak.view(n_kv, num_kv_groups).mean(dim=1)
+    else:
+        per_kv_head = per_q_head_peak
+    return per_kv_head.var(unbiased=False)

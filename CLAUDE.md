@@ -32,7 +32,9 @@ code/
 └── .python-version           # 3.11
 ```
 
-After cloning, run `git submodule update --init --recursive` (or clone with `--recurse-submodules`). AdaKV has a `gqa_support` branch worth considering for GQA models — we track `main` by default.
+After cloning, run `git submodule update --init --recursive` (or clone with `--recurse-submodules`). AdaKV is pinned to its `gqa_support` branch since the calibration target is Llama-3.1-8B (GQA). KVQuant and DynamicKV track `main`.
+
+**Calibration target: `meta-llama/Llama-3.1-8B`.** Gated on HF Hub — accept the license and `huggingface-cli login` before any GPU stage. 32 Q-heads / 8 KV-heads (GQA group size 4); 128K native context.
 
 `calibration/` scripts each own one stage and write JSONL; stages are independent. Imports rely on the repo root being on `sys.path`; each script does this via `sys.path.insert(0, parents[1])`, so `uv run python calibration/<stage>.py` works.
 
@@ -97,15 +99,14 @@ uv run python calibration/make_labels.py --signals signals.jsonl \
 - **Phase A precedence is explicit, not a scoring function:** QAQ-capable → high head-variance → low entropy → high entropy + long ctx → high entropy + short ctx → default KVQuant 8b. Order matters; head-variance check fires first and dominates if `τ_head_var` is mis-tuned (the mock run hit 100% Ada-KV with the default threshold — see "Mock Validation Findings" in the design doc).
 - **Strategy is prefill-locked**, frozen for the rest of generation. Backends have incompatible memory layouts.
 - **Eager attention is required** for `collect_signals.py` — FlashAttention does not materialize attention weights.
-- **GQA**: head variance is over KV heads, entropy is over Q heads.
+- **GQA**: `signals.head_variance(weights, num_kv_groups)` folds adjacent Q-heads into KV-head groups before taking the cross-head variance. `collect_signals` reads `attn.num_key_value_groups` from each Llama-family attention module and threads it through. Entropy stays over Q-heads.
 - **Feature normalization** for the MLP: `entropy / log(L)`, `log1p(L)`, `layer_idx / (num_layers - 1)`. Head variance stays raw.
 
 ## What's NOT done yet
 
 1. Per-backend runners under `backends/runners/` are skeletons (raise `NotImplementedError`). Each needs to be filled in against the corresponding upstream submodule's API and shipped with its own uv environment under `backends/runners/<name>_env/`. The runner outputs (`{prompt_id, ppl, cratio}` JSONL per strategy) plus baseline.jsonl drive `join_labels.py`, which is already implemented.
 3. `signals.head_variance` uses cross-head variance of mean peak attention probability as the heterogeneity statistic — the design doc doesn't pin this down, and `tau_head_var` calibration depends on it. Re-tune the threshold against real signals before any production labeling run.
-4. GQA: `head_variance` operates on Q-heads (post-repetition); the doc calls for KV-heads. With GQA models, group Q-heads by `num_key_value_groups` first.
-5. The classifier trainer.
+4. The classifier trainer.
 
 ## Conventions
 
