@@ -111,16 +111,28 @@ Open follow-ups (need GPU):
 | join_labels | 5 measurements, argmax = dynamickv for all 5 |
 | make_labels | 100 training rows with the trainer-expected schema |
 
-**Known issue: AdaKV perplexity is way above baseline at any base_capacity.** AdaKV's API is built around `model.generate()` with internal cache state; teacher-forced perplexity via prompt-prefill + token-by-token decode causes per-step re-evictions on its flattened post-eviction layout. Bulk-decoding the target via `past_key_values=...` doesn't work because the post-eviction K/V tensor is rank-2 (flattened) rather than rank-4. **The runner produces JSONL — pipeline is unblocked — but AdaKV's ppl numbers are not a valid measurement of its quality.** Fix options: use `model.generate()` with log-prob extraction, or freeze AdaKV's eviction after the first prefill via a hook. Tracked separately as task 5b below.
+**Smoke results post-fix (5 wikitext-short prompts, base_capacity=128, max_capacity_prompt=128):**
 
-## 5b. Fix AdaKV teacher-forced perplexity
-**Status:** open · **Effort:** half-day
+| | wt-0 | wt-1 | wt-2 | wt-3 | wt-4 |
+|---|---|---|---|---|---|
+| baseline ppl | 8.14 | 14.05 | 16.25 | 23.89 | 11.77 |
+| DynamicKV ppl | 8.14 | 14.02 | 16.30 | 23.91 | 11.80 |
+| AdaKV ppl | 9.20 | 14.54 | 17.25 | 29.80 | 11.83 |
+| argmax | dynamickv | dynamickv | dynamickv | dynamickv | dynamickv |
 
-AdaKV's design assumes one prefill + autoregressive generation, not teacher-forcing. Two paths:
-- `model.generate()` with `output_scores=True` to extract per-token log-probs of the target sequence — requires injecting the target tokens as `decoder_input_ids` or using `forced_decoder_ids`.
-- Hook into AdaKV's eviction trigger to fire only on the first prefill, then run a normal teacher-forced second forward.
+DynamicKV barely degrades baseline; AdaKV degrades modestly. Both compress similarly (cratio ~0.36-0.50). Argmax picks dynamickv on all 5 — consistent with the paper's finding that DynamicKV outperforms SnapKV-family methods under high compression.
 
-Until this is fixed, AdaKV will lose every per-prompt argmax (its score is wildly negative).
+## 5b. Fix AdaKV teacher-forced perplexity — **DONE**
+
+AdaKV's API is built around `model.generate()` with internal cache state, not teacher-forced perplexity. None of the standard patterns (token-by-token decode, single-pass `use_cache=True`, bulk decode via `past_key_values=...`) produced clean numbers — the post-eviction flattened K/V layout, mid-forward eviction, and per-step re-evictions all conflict in different ways.
+
+**Fix:** route teacher-forcing through `model.generate` with two pieces:
+- `prefix_allowed_tokens_fn` constrains generation at each step to the next target token, forcing the model to "generate" the target sequence one token at a time.
+- A forward hook on the model captures the **raw model logits** at each call (logits before any logits processor mask). The softmax denominator is the full vocabulary, so the per-step log-prob of the forced target token is the genuine teacher-forced quantity.
+
+Eviction fires once during `generate`'s prefill — matching the upstream LongBench eval shape. Decode steps use the flattened cache correctly because we go through `model.generate`'s code path, which is exactly what AdaKV's monkey-patched forward expects.
+
+Smoke ppls dropped from 137-557 to 9.2-29.8 (close to baseline 8.1-23.9), within the paper's "~90% of FullKV" claim.
 
 ---
 

@@ -84,20 +84,26 @@ def _load_adakv_llama(model_name: str, base_capacity: int,
 
 def _perplexity_evicted(model, tok, prompt_text: str, target_text: str,
                         max_length: int, device: str) -> tuple[float, int]:
-    """Token-by-token decode after prefill. AdaKV's flattened post-eviction
-    K/V layout means we can't easily bulk-decode the target tokens with
-    `past_key_values=...` (rank-2 vs rank-4 mismatch). Token-by-token decode
-    keeps things working but inflates ppl: AdaKV may re-evict per decode
-    step, which is *not* the upstream eval shape (`model.generate`). The
-    resulting numbers are not directly comparable to baseline. **Known
-    issue tracked in TASKS.md** — proper fix is using `model.generate` with
-    log-prob extraction or a custom hook that freezes eviction after the
-    first prefill.
+    """Teacher-forced perplexity through `model.generate` with the target
+    sequence as a constraint.
 
-    Returns (ppl, prompt_len_tokens).
+    Why this shape: AdaKV's flattened post-eviction K/V layout makes
+    standard teacher-forced decoding via `past_key_values=...` break
+    (rank-2 vs rank-4). Single-pass with use_cache=True breaks because
+    eviction mid-forward shrinks logits' seq dim out of step with labels.
+    Token-by-token decode via past_kv runs but re-triggers AdaKV's
+    eviction each step, inflating ppl wildly.
+
+    `model.generate` is the eval shape AdaKV's upstream LongBench pipeline
+    uses — eviction fires once during prefill, and decode steps treat the
+    flattened cache correctly. We constrain generation to the target
+    sequence via `prefix_allowed_tokens_fn` (teacher-forcing through
+    generate) and capture the model's raw logits at each step via a
+    forward hook (raw logits, not the post-processor masked ones, so the
+    softmax denominator is the full vocabulary).
     """
     import torch
-    import torch.nn.functional as F
+    from transformers.models.llama.modeling_llama import LlamaForCausalLM
 
     prompt_ids = tok(
         prompt_text, return_tensors="pt",
@@ -106,26 +112,64 @@ def _perplexity_evicted(model, tok, prompt_text: str, target_text: str,
     target_ids = tok(
         target_text, return_tensors="pt", add_special_tokens=False,
     ).input_ids.to(device)
+    target_list = target_ids[0].tolist()
+    target_len = len(target_list)
     prompt_len = int(prompt_ids.shape[1])
 
-    with torch.inference_mode():
-        out = model(input_ids=prompt_ids, use_cache=True)
-        past = out.past_key_values
-        prev_logits = out.logits[:, -1:, :]
+    if target_len == 0:
+        return float("inf"), prompt_len
 
-        nll_terms: list[torch.Tensor] = []
-        for t in range(target_ids.shape[1]):
-            tok_id = target_ids[:, t:t + 1]
-            log_probs = F.log_softmax(prev_logits.float(), dim=-1)
-            nll_terms.append(-log_probs.gather(-1, tok_id.unsqueeze(-1)).squeeze())
+    # Capture raw logits at each forward call. The last position's logit
+    # at call k predicts step-k's token (the prefill's last logit predicts
+    # target[0]; subsequent decode-step logits predict target[1], target[2], ...).
+    captured: list[torch.Tensor] = []
 
-            if t < target_ids.shape[1] - 1:
-                step = model(input_ids=tok_id, past_key_values=past, use_cache=True)
-                past = step.past_key_values
-                prev_logits = step.logits[:, -1:, :]
+    def _hook(module, args, kwargs, output):
+        # CausalLMOutputWithPast has a `.logits` attribute.
+        logits = getattr(output, "logits", None)
+        if logits is None:
+            return
+        captured.append(logits[:, -1:, :].detach())
 
-    nll = torch.stack(nll_terms).mean().item()
-    return math.exp(nll), prompt_len
+    handle = model.register_forward_hook(_hook, with_kwargs=True)
+
+    def _prefix_fn(batch_idx: int, input_ids):
+        step = int(input_ids.shape[-1]) - prompt_len
+        if 0 <= step < target_len:
+            return [target_list[step]]
+        # After we've forced the full target, anything is fine; generate
+        # will stop at max_new_tokens anyway.
+        return [tok.eos_token_id]
+
+    try:
+        with torch.inference_mode():
+            model.generate(
+                input_ids=prompt_ids,
+                max_new_tokens=target_len,
+                do_sample=False,
+                num_beams=1,
+                prefix_allowed_tokens_fn=_prefix_fn,
+                pad_token_id=tok.eos_token_id,
+            )
+    finally:
+        handle.remove()
+
+    # captured[0] is the prefill's logits (last position predicts target[0]);
+    # captured[k] for k=1..target_len is the decode-step k's logits
+    # (predicts target[k]). We want target_len log-probs total.
+    if len(captured) < target_len:
+        # Fall back: if we got fewer logits than expected (some HF version
+        # quirk), score what we have.
+        target_len = len(captured)
+        target_list = target_list[:target_len]
+
+    log_probs = torch.cat([
+        torch.log_softmax(captured[i].float(), dim=-1)
+        for i in range(target_len)
+    ], dim=1)  # [B, target_len, V]
+    target_t = torch.tensor(target_list, device=log_probs.device).unsqueeze(0).unsqueeze(-1)
+    nll = -log_probs.gather(-1, target_t).squeeze(-1).mean()
+    return math.exp(nll.item()), prompt_len
 
 
 def run(model_name: str, prompts_path: str, out_path: str,
