@@ -1,0 +1,16 @@
+# uv / Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.uv/
+uv.lock.lock
+
+# Pipeline outputs
+*.jsonl
+!**/fixtures/*.jsonl
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,29 @@
+[project]
+name = "kv-cache-selector-calibration"
+version = "0.1.0"
+description = "Calibration data pipeline for the adaptive KV cache strategy selector (Phase B classifier)."
+readme = "CALIBRATION_PIPELINE.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "datasets>=2.20",
+    "accelerate>=0.33",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.uv]
+# Script-only project — no package to build. Selector core
+# (signals.py / selector.py / strategies.py) lives elsewhere; once
+# vendored, switch this to package = true and add a build-system.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
