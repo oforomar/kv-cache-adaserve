@@ -69,6 +69,7 @@ def main() -> None:
             continue
         m = label_by_pid[pid]
         joined.append({
+            "prompt_id": pid,
             "signals": {
                 "entropy": s["entropy"],
                 "entropy_normalized": s["entropy_normalized"],

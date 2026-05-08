@@ -68,6 +68,7 @@ Each row of `training_lam*.jsonl`:
 
 ```json
 {
+  "prompt_id": "wikitext-short-0023",
   "signals": {
     "entropy": 1.786,
     "entropy_normalized": 0.319,
@@ -80,7 +81,7 @@ Each row of `training_lam*.jsonl`:
 }
 ```
 
-`label` is one of `kvquant_8b`, `kvquant_3b`, `dynamickv`, `adakv` — the four members of `RUNTIME_STRATEGIES` in `strategies.py`. (`qaq` is the fifth `Strategy` enum value but Phase B doesn't predict it; it's handled offline.)
+`prompt_id` is the source-prefixed id of the originating prompt (e.g. `wikitext-short-0023`, `alpaca-medium-0007`). Use it to group the 28 per-layer rows that came from the same prompt for train/val splits. `label` is one of `kvquant_8b`, `kvquant_3b`, `dynamickv`, `adakv` — the four members of `RUNTIME_STRATEGIES` in `strategies.py`. (`qaq` is the fifth `Strategy` enum value but Phase B doesn't predict it; it's handled offline.)
 
 ## Featurization (per design doc)
 
@@ -144,15 +145,25 @@ loader = DataLoader(ds, batch_size=128, shuffle=True)
 
 ## Train/val split
 
-Important: **split by `prompt_id`**, not row-randomly. Each prompt contributes 28 rows (one per layer); a random row split would let layers from the same prompt land in both train and val, leaking information. Group by prompt:
+Important: **split by `prompt_id`**, not row-randomly. Each prompt contributes 28 rows (one per layer); a random row split would let layers from the same prompt land in both train and val, leaking information. Group by prompt first:
 
 ```python
 import random
-prompt_ids = sorted({r["signals"].get("prompt_id") or _infer_pid(r) for r in ds.rows})
-# (Or attach prompt_id to each row at make_labels time; current schema strips it.)
+from collections import defaultdict
+
+rows_by_pid = defaultdict(list)
+for r in ds.rows:
+    rows_by_pid[r["prompt_id"]].append(r)
+
+pids = sorted(rows_by_pid)
+random.Random(42).shuffle(pids)
+n_val = max(1, len(pids) // 5)             # 80/20 train/val by prompt
+val_pids = set(pids[:n_val])
+train_rows = [r for pid in pids[n_val:] for r in rows_by_pid[pid]]
+val_rows   = [r for pid in pids[:n_val]  for r in rows_by_pid[pid]]
 ```
 
-The current `make_labels.py` does **not** carry `prompt_id` into `training.jsonl`. If you want a clean prompt-level split, the simplest path is to re-emit `training.jsonl` with `prompt_id` included — small change in `calibration/make_labels.py` (joined['prompt_id'] = s['prompt_id']). For the validation run, randomly splitting layers across prompts is acceptable but won't give a true generalization estimate.
+(Wrap each list back into a `CalibDataset` by setting `ds.rows = train_rows` on a fresh instance, or factor `featurize` out and feed the lists directly to `DataLoader`.)
 
 ## A minimal MLP that fits the four features
 
@@ -259,6 +270,5 @@ For a full TARGET_MIX run on this hardware: skip step 2's custom mix, use `promp
 ## Open issues that affect the trainer
 
 - **Class imbalance** — at λ=10, KVQuant 3-bit is 78% of labels. Class-weighted loss or stratified sampling matters for model quality.
-- **Train/val split needs prompt_id** — `make_labels.py` strips `prompt_id` from training rows. Add it back before splitting, otherwise val leaks layers from train prompts.
 - **Calibration pickles were built without Fisher info** — KVQuant accepts `fisher=None`; quality is slightly below upstream's "<0.1 ppl degradation at 3-bit" claim (we saw ~0.5 here). For the production training set, consider running the upstream `gradients/` pipeline once and re-building pickles with `--fisher`.
 - **Phase A vs Phase B agreement rate** — diagnostic hasn't been computed yet (no `agreement_rate.py` script). Per the design doc, >80% agreement = per-prompt labels are sufficient; <50% = need real per-layer labels (much bigger budget).
