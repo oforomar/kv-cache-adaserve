@@ -63,6 +63,9 @@ uv run python calibration/make_labels.py \
 Real run (~50 GPU-hours per λ on H100, 7B model — once per-backend runners are filled in):
 
 ```bash
+# 0. real prompts (main env; pulls from HF datasets)
+uv run python calibration/prompts.py --tokenizer <hf-id> --out prompts.jsonl
+
 # 1. signals + baseline (main env)
 uv run python calibration/collect_signals.py --model <hf-id> \
     --prompts prompts.jsonl --out signals.jsonl
@@ -99,8 +102,7 @@ uv run python calibration/make_labels.py --signals signals.jsonl \
 
 ## What's NOT done yet
 
-1. Real prompt loaders in `calibration/prompts.py` (currently raises `SystemExit` without `--mock`).
-2. Per-backend runners under `backends/runners/` are skeletons (raise `NotImplementedError`). Each needs to be filled in against the corresponding upstream submodule's API and shipped with its own uv environment under `backends/runners/<name>_env/`. The runner outputs (`{prompt_id, ppl, cratio}` JSONL per strategy) plus baseline.jsonl drive `join_labels.py`, which is already implemented.
+1. Per-backend runners under `backends/runners/` are skeletons (raise `NotImplementedError`). Each needs to be filled in against the corresponding upstream submodule's API and shipped with its own uv environment under `backends/runners/<name>_env/`. The runner outputs (`{prompt_id, ppl, cratio}` JSONL per strategy) plus baseline.jsonl drive `join_labels.py`, which is already implemented.
 3. `signals.head_variance` uses cross-head variance of mean peak attention probability as the heterogeneity statistic — the design doc doesn't pin this down, and `tau_head_var` calibration depends on it. Re-tune the threshold against real signals before any production labeling run.
 4. GQA: `head_variance` operates on Q-heads (post-repetition); the doc calls for KV-heads. With GQA models, group Q-heads by `num_key_value_groups` first.
 5. The classifier trainer.

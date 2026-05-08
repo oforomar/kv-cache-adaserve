@@ -8,7 +8,7 @@ The full design rationale (orthogonality argument, label-granularity trade-off, 
 
 | Component | State |
 |---|---|
-| Length-stratified prompt curation (`calibration/prompts.py`) | mock generator works; real HF `datasets` loaders not wired |
+| Length-stratified prompt curation (`calibration/prompts.py`) | mock generator + real HF `datasets` loaders for all six sources (xlong via concatenation) |
 | Per-(prompt, layer) signal capture (`calibration/collect_signals.py`) | implemented; needs a real model to run |
 | Baseline FP16 perplexity (`calibration/score_baseline.py`) | implemented |
 | Per-prompt label join + λ scoring (`calibration/join_labels.py`) | implemented |
@@ -63,6 +63,9 @@ uv run python calibration/make_labels.py \
 Real run (~50 GPU-hours per λ on H100, 7B model — once per-backend runners are filled in; see `backends/runners/README.md`):
 
 ```bash
+# 0. real prompts (main env; downloads from HF Hub)
+uv run python calibration/prompts.py --tokenizer <hf-id> --out prompts.jsonl
+
 # 1. signals + baseline (main env)
 uv run python calibration/collect_signals.py --model <hf-id> \
     --prompts prompts.jsonl --out signals.jsonl

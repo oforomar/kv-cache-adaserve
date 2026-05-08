@@ -15,19 +15,11 @@ Behavior now matches "λ=10 favors aggressive compression".
 
 ---
 
-## 2. Real prompt loaders in `calibration/prompts.py`
-**Status:** open · **Blocks:** any non-mock pipeline run · **Effort:** ~1 day, no GPU
+## 2. Real prompt loaders in `calibration/prompts.py` — **DONE**
 
-Currently `--mock` only — the real path is a `SystemExit`. Wire HuggingFace `datasets` for the six sources in `TARGET_MIX`:
+Implemented all six HF dataset sources (WikiText, LongBench, MMLU, HumanEval, CNN/DailyMail, Alpaca) behind a shared "pool tokens, slice into buckets" core. Decisions: xlong via concatenation across adjacent passages; fixed 128-token target_text. CLI: `--tokenizer <hf-id> --out prompts.jsonl` (the tokenizer must match the calibration target model so bucket lengths are tokenwise consistent with downstream signal collection).
 
-- WikiText (200/200/100/50 across short/medium/long/xlong)
-- LongBench (0/100/200/100)
-- MMLU (150/50/0/0)
-- HumanEval (100/50/0/0)
-- CNN/DailyMail (100/150/0/0)
-- Alpaca (200/100/0/0)
-
-Each source needs: tokenize, length-bucket, split into `(text, target_text)` for perplexity scoring, write to JSONL. Verify per-bucket counts match `TARGET_MIX` before declaring done. ~1500–2000 prompts total.
+Smoke-tested the pooler with a fake tokenizer + iterator: bucket counts honored, prompt lengths randomized within bounds. Real-network validation deferred to first end-to-end run (task 5) — dataset IDs may need adjusting if any have moved on HF Hub.
 
 ---
 
