@@ -34,7 +34,7 @@ code/
 
 After cloning, run `git submodule update --init --recursive` (or clone with `--recurse-submodules`). AdaKV is pinned to its `gqa_support` branch since the calibration target is Llama-3.1-8B (GQA). KVQuant and DynamicKV track `main`.
 
-**Calibration target: `meta-llama/Llama-3.1-8B`.** Gated on HF Hub — accept the license and `huggingface-cli login` before any GPU stage. 32 Q-heads / 8 KV-heads (GQA group size 4); 128K native context.
+**Calibration target: `meta-llama/Llama-3.2-3B`.** Gated on HF Hub — accept the license and `huggingface-cli login` before any GPU stage. 24 Q-heads / 8 KV-heads (GQA group size 3); 128K native context. Switched from Llama-3.1-8B because the 16GB VRAM on the available laptop GPU (RTX 3080 Laptop) can't hold 8B weights plus a meaningful KV cache.
 
 `calibration/` scripts each own one stage and write JSONL; stages are independent. Imports rely on the repo root being on `sys.path`; each script does this via `sys.path.insert(0, parents[1])`, so `uv run python calibration/<stage>.py` works.
 
@@ -104,7 +104,7 @@ uv run python calibration/make_labels.py --signals signals.jsonl \
 
 ## What's NOT done yet
 
-1. Per-backend runners under `backends/runners/` are implemented (AdaKV, KVQuant, DynamicKV) but pending GPU validation against `meta-llama/Llama-3.1-8B`. KVQuant additionally requires the user to run upstream's offline calibration (Fisher info + NUQ codebook) once per bitwidth before its runner can produce useful labels — see `backends/runners/kvquant_env/README.md`.
+1. Per-backend runners under `backends/runners/` are implemented (AdaKV, KVQuant, DynamicKV) but pending GPU validation against `meta-llama/Llama-3.2-3B`. KVQuant additionally requires the user to run upstream's offline calibration (Fisher info + NUQ codebook) once per bitwidth before its runner can produce useful labels — see `backends/runners/kvquant_env/README.md`.
 3. `signals.head_variance` uses cross-head variance of mean peak attention probability as the heterogeneity statistic — the design doc doesn't pin this down, and `tau_head_var` calibration depends on it. Re-tune the threshold against real signals before any production labeling run.
 4. The classifier trainer.
 

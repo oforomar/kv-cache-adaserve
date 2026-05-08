@@ -16,7 +16,7 @@ uv pip install --project backends/runners/dynamickv_env flash-attn --no-build-is
 
 ```bash
 uv run --project backends/runners/dynamickv_env python backends/runners/run_dynamickv.py \
-    --model meta-llama/Llama-3.1-8B --prompts prompts.jsonl \
+    --model meta-llama/Llama-3.2-3B --prompts prompts.jsonl \
     --out dynamickv.jsonl --max-capacity-prompt 512
 ```
 

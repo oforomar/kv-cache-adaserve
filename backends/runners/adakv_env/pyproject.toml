@@ -7,10 +7,12 @@ dependencies = [
     "torch>=2.2",
     "transformers==4.44.2",
     "accelerate>=0.33",
-    "datasets>=2.20",
+    # `datasets` is intentionally NOT here — adakv pins tqdm==4.66.1 strictly,
+    # which conflicts with datasets>=2.20.0 (needs tqdm>=4.66.3). The runner
+    # doesn't load HF datasets; prompts come in as JSONL.
     "numpy>=1.24",
-    "tqdm>=4.66",
     # adakv itself, vendored as a git submodule at backends/adakv.
+    # Brings in tqdm==4.66.1, jieba, sentencepiece, etc. as transitive deps.
     "adakv",
     # flash-attn is intentionally NOT listed: it requires --no-build-isolation
     # against the installed torch ABI. Install manually after `uv sync`:

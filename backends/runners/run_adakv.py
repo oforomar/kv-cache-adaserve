@@ -25,7 +25,7 @@ Output: per-prompt JSONL of {prompt_id, ppl, cratio}.
 
 Usage:
     uv run --project backends/runners/adakv_env python backends/runners/run_adakv.py \
-        --model meta-llama/Llama-3.1-8B \
+        --model meta-llama/Llama-3.2-3B \
         --prompts prompts.jsonl --out adakv.jsonl --base-capacity 1024
 """
 from __future__ import annotations
@@ -76,7 +76,7 @@ def _load_adakv_llama(model_name: str, base_capacity: int,
         floor_alpha=floor_alpha,
         pyram_mode=False,
         skip=0,
-        gqa_support=True,    # Llama-3.1-8B is GQA (8 KV / 32 Q)
+        gqa_support=True,    # Llama-3.2-3B is GQA (8 KV / 24 Q)
         gqa_func="mean",
     )
     return model, tok
@@ -156,7 +156,7 @@ def run(model_name: str, prompts_path: str, out_path: str,
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True,
-                    help="HF model id, e.g. meta-llama/Llama-3.1-8B")
+                    help="HF model id, e.g. meta-llama/Llama-3.2-3B")
     ap.add_argument("--prompts", required=True)
     ap.add_argument("--out", default="adakv.jsonl")
     ap.add_argument("--base-capacity", type=int, default=1024,

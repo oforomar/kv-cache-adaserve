@@ -25,7 +25,7 @@ than the budget; saturates at 1.0 for shorter prompts.
 
 Usage:
     uv run --project backends/runners/dynamickv_env python backends/runners/run_dynamickv.py \\
-        --model meta-llama/Llama-3.1-8B \\
+        --model meta-llama/Llama-3.2-3B \\
         --prompts prompts.jsonl --out dynamickv.jsonl \\
         --max-capacity-prompt 512
 """
@@ -170,7 +170,7 @@ def run(model_name: str, prompts_path: str, out_path: str,
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True,
-                    help="HF model id, e.g. meta-llama/Llama-3.1-8B")
+                    help="HF model id, e.g. meta-llama/Llama-3.2-3B")
     ap.add_argument("--prompts", required=True)
     ap.add_argument("--out", default="dynamickv.jsonl")
     ap.add_argument("--max-capacity-prompt", type=int, default=512,

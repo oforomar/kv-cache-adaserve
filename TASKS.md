@@ -25,7 +25,9 @@ Smoke-tested the pooler with a fake tokenizer + iterator: bucket counts honored,
 
 ## 3. Pick the calibration target model — **DONE**
 
-**Choice: `meta-llama/Llama-3.1-8B`.** GQA (32 Q-heads / 8 KV-heads, group size 4), 128K native context — the xlong bucket actually exercises the model. Gated on HF Hub; the user needs to accept the license and `huggingface-cli login` before any GPU stage.
+**Initial choice: `meta-llama/Llama-3.1-8B`** (32 Q / 8 KV, group 4). **Revised to `meta-llama/Llama-3.2-3B`** (24 Q / 8 KV, group 3, 128K ctx) after hardware probe revealed the available GPU is a 16GB laptop card; 8B bf16 weights alone fill it before any KV cache. Both gated on HF Hub.
+
+The GQA `head_variance` fold is divisibility-checked, so it works for either group size; switching targets needs no code changes beyond the `--model` / `--tokenizer` CLI args.
 
 Follow-on changes landed with this task:
 

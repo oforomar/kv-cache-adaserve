@@ -13,7 +13,7 @@ KVQuant's calibration pipeline lives in two subfolders of the upstream submodule
 cd backends/kvquant/gradients
 pip install -e .
 # Compute fisher info for the target model — produces a directory of safetensors
-python compute_fisher.py --model meta-llama/Llama-3.1-8B --output /tmp/fisher_llama31_8b ...
+python compute_fisher.py --model meta-llama/Llama-3.2-3B --output /tmp/fisher_llama32_3b ...
 ```
 
 Refer to `backends/kvquant/gradients/README.md` for the exact CLI; it varies by upstream version.
@@ -26,16 +26,16 @@ cd backends/kvquant/quant
 pip install -e .
 
 # 4-bit (used for our `kvquant_8b` strategy)
-python llama_simquant.py meta-llama/Llama-3.1-8B \
+python llama_simquant.py meta-llama/Llama-3.2-3B \
     --abits 4 --nsamples 16 --seqlen 2048 \
-    --nuq --fisher /tmp/fisher_llama31_8b \
+    --nuq --fisher /tmp/fisher_llama32_3b \
     --quantize --include_sparse --sparsity-threshold 0.99 \
     --quantizer-path /tmp/quantizers_4bit.pickle
 
 # 3-bit (used for our `kvquant_3b` strategy)
-python llama_simquant.py meta-llama/Llama-3.1-8B \
+python llama_simquant.py meta-llama/Llama-3.2-3B \
     --abits 3 --nsamples 16 --seqlen 2048 \
-    --nuq --fisher /tmp/fisher_llama31_8b \
+    --nuq --fisher /tmp/fisher_llama32_3b \
     --quantize --include_sparse --sparsity-threshold 0.99 \
     --quantizer-path /tmp/quantizers_3bit.pickle
 ```
@@ -62,12 +62,12 @@ Two invocations, one per bitwidth:
 
 ```bash
 uv run --project backends/runners/kvquant_env python backends/runners/run_kvquant.py \
-    --model meta-llama/Llama-3.1-8B --prompts prompts.jsonl \
+    --model meta-llama/Llama-3.2-3B --prompts prompts.jsonl \
     --out kvquant_8b.jsonl --bitwidth 8 \
     --quantizer-path /tmp/quantizers_4bit.pickle
 
 uv run --project backends/runners/kvquant_env python backends/runners/run_kvquant.py \
-    --model meta-llama/Llama-3.1-8B --prompts prompts.jsonl \
+    --model meta-llama/Llama-3.2-3B --prompts prompts.jsonl \
     --out kvquant_3b.jsonl --bitwidth 3 \
     --quantizer-path /tmp/quantizers_3bit.pickle
 ```

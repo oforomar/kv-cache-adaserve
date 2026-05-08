@@ -21,7 +21,7 @@ storage, ignoring the small dense-and-sparse codebook overhead).
 
 Usage:
     uv run --project backends/runners/kvquant_env python backends/runners/run_kvquant.py \\
-        --model meta-llama/Llama-3.1-8B \\
+        --model meta-llama/Llama-3.2-3B \\
         --prompts prompts.jsonl --out kvquant_8b.jsonl --bitwidth 8 \\
         --quantizer-path quantizers_4bit.pickle
 """
@@ -183,7 +183,7 @@ def run(model_name: str, prompts_path: str, out_path: str, bitwidth: int,
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True,
-                    help="HF model id, e.g. meta-llama/Llama-3.1-8B")
+                    help="HF model id, e.g. meta-llama/Llama-3.2-3B")
     ap.add_argument("--prompts", required=True)
     ap.add_argument("--out", required=True,
                     help="Per-strategy JSONL, e.g. kvquant_8b.jsonl or kvquant_3b.jsonl")
