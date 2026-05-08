@@ -4,23 +4,33 @@ version = "0.0.1"
 description = "Per-backend runner env for AdaKV — pinned to upstream's Llama-3.1-compatible transformers."
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.2",
+    # Pin torch to a stable cu121 release so prebuilt flash-attn wheels
+    # exist (system CUDA toolkit is 12.0; torch+cu121 wheels are
+    # forward-compatible with nvcc 12.x). Without this pin uv pulls
+    # torch+cu130, which has no compatible flash-attn wheel for cp311.
+    "torch==2.5.1",
     "transformers==4.44.2",
     "accelerate>=0.33",
     # `datasets` is intentionally NOT here — adakv pins tqdm==4.66.1 strictly,
     # which conflicts with datasets>=2.20.0 (needs tqdm>=4.66.3). The runner
     # doesn't load HF datasets; prompts come in as JSONL.
     "numpy>=1.24",
+    "einops>=0.8",    # required by flash-attn at import time
+    "flash-attn",     # URL-pinned via [tool.uv.sources] below; nvcc-free wheel.
     # adakv itself, vendored as a git submodule at backends/adakv.
     # Brings in tqdm==4.66.1, jieba, sentencepiece, etc. as transitive deps.
     "adakv",
-    # flash-attn is intentionally NOT listed: it requires --no-build-isolation
-    # against the installed torch ABI. Install manually after `uv sync`:
-    #   uv pip install flash-attn --no-build-isolation
 ]
 
 [tool.uv]
 package = false
 
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
 [tool.uv.sources]
 adakv = { path = "../../adakv", editable = true }
+torch = { index = "pytorch-cu121" }
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" }

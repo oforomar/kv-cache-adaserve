@@ -4,15 +4,27 @@ version = "0.0.1"
 description = "Per-backend runner env for DynamicKV. The DynamicKV submodule isn't pip-installable; the runner adds it to sys.path."
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.2",
+    # Pin torch to a stable cu121 release matching the system's nvcc 12.0.
+    # See adakv_env/pyproject.toml for the full reasoning.
+    "torch==2.5.1",
     "transformers>=4.44,<4.46",   # upstream targets 4.44.x
     "accelerate>=0.33",
     "datasets>=2.20",
     "numpy>=1.24",
     "tqdm>=4.66",
-    # flash-attn is required (DynamicKV's patches replace flash_attention_2 forward):
-    #   uv pip install --project backends/runners/dynamickv_env flash-attn --no-build-isolation
+    "jsonlines>=4",   # transitive dep of DynamicKV's methods/dynamic_v11.py
+    "einops>=0.8",    # required by flash-attn at import time
+    "flash-attn",     # URL-pinned via [tool.uv.sources] below; nvcc-free wheel.
 ]
 
 [tool.uv]
 package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.0.post2/flash_attn-2.7.0.post2+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" }
