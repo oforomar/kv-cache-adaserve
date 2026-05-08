@@ -54,11 +54,35 @@ Open follow-ups (need GPU + HF auth to validate):
 - Run a sanity check on ~5 prompts and verify the output JSONL has plausible ppl (close to baseline at `base_capacity ≥ seq_len`, higher when `base_capacity « seq_len`).
 - The two-step perplexity loop runs decode autoregressively (one forward per target token). For 128-token targets × 1850 prompts that's ~237K extra forwards — measure the actual time on H100; if it's a meaningful fraction of total budget, batch the target-side forwards.
 
-### 4b. KVQuant (`backends/runners/run_kvquant.py`)
-Has custom CUDA kernels under `backends/kvquant/quant/`. Building the kernels against a specific torch ABI is the env's main constraint. Upstream has a documented eval pipeline; lift it into the per-prompt loop. Single runner emits both `kvquant_8b.jsonl` and `kvquant_3b.jsonl` via `--bitwidth`.
+### 4b. KVQuant (`backends/runners/run_kvquant.py`) — **DONE pending GPU validation + offline prep**
 
-### 4c. DynamicKV (`backends/runners/run_dynamickv.py`)
-Youngest of the three; expect more time reading source to find the right entrypoint. Monkey-patches transformers internals — env isolation is non-negotiable.
+Implemented:
+- Env `backends/runners/kvquant_env/` with KVQuant submodule (`backends/kvquant/quant`) as editable path source.
+- Runner uses `kvquant.simquant_module_quantizer.make_quant_sim` to patch K/V projections (per-channel for `k_proj`, per-token + dynamic for `v_proj`); falls back from flash-attn to eager if FA isn't built.
+- Per-prompt teacher-forced perplexity, standard pattern (no two-step needed; quantization is in the patched projections).
+- Bitwidth mapping: `--bitwidth 8 → KVQuant 4-bit`, `--bitwidth 3 → 3-bit`. KVQuant has no native 8-bit; 4-bit is the closest "light-compression" point. `cratio = abits / 16`.
+- CLI exposes NUQ on/off, NormalFloat NUQ, sparsity threshold, attention-sink fp16-prefix, max-length.
+
+**Critical prerequisite (cannot be automated):** the user must run KVQuant's upstream Fisher-info pipeline + `llama_simquant.py --quantize` once per bitwidth, producing `quantizers_4bit.pickle` and `quantizers_3bit.pickle`. See `backends/runners/kvquant_env/README.md` for the prep CLI. This calibration is hours of mostly-CPU work.
+
+Open follow-ups (need GPU + the prep pickles):
+- Verify the runner finds and applies the pickle without errors against Llama-3.1-8B.
+- The `--first-few-fp16` attention-sink option may improve quality at low bitwidths; sweep on a small set after validation.
+
+### 4c. DynamicKV (`backends/runners/run_dynamickv.py`) — **DONE pending GPU validation**
+
+Implemented:
+- Env `backends/runners/dynamickv_env/` with `transformers>=4.44,<4.46` (matches upstream) and a note that flash-attn is mandatory (the runner uses DynamicKV's `flash_attention_2` patches).
+- Runner uses `kv_compression.token_drop.monkeypatch.replace_attention(model_type="llama", method="dynamickv_v11")` (the upstream-recommended head per their LongBench scripts), then sets per-layer `self_attn.config.{window_size, max_capacity_prompt, kernel_size, pooling, radio_max}`.
+- Per-prompt teacher-forced perplexity. `cratio = max_capacity_prompt / seq_len` (saturates at 1.0 for short prompts).
+
+Two upstream quirks worked around in the runner:
+- DynamicKV's `monkeypatch.py` does an unconditional `import transformers_modules.internlm2_5_7b_chat_1m.modeling_internlm2` at module-import time; the runner stubs that module in `sys.modules` before importing.
+- The DynamicKV submodule has no `setup.py` / `pyproject.toml`, so it isn't pip-installable. The runner adds `backends/dynamickv` to `sys.path` at startup.
+
+Open follow-ups (need GPU):
+- Verify the patched flash_attention_2 forward runs cleanly on Llama-3.1-8B.
+- Sweep `--max-capacity-prompt` (paper tested 64–4096) on a small set after validation.
 
 ---
 

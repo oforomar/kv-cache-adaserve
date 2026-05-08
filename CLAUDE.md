@@ -104,7 +104,7 @@ uv run python calibration/make_labels.py --signals signals.jsonl \
 
 ## What's NOT done yet
 
-1. Per-backend runners under `backends/runners/` are skeletons (raise `NotImplementedError`). Each needs to be filled in against the corresponding upstream submodule's API and shipped with its own uv environment under `backends/runners/<name>_env/`. The runner outputs (`{prompt_id, ppl, cratio}` JSONL per strategy) plus baseline.jsonl drive `join_labels.py`, which is already implemented.
+1. Per-backend runners under `backends/runners/` are implemented (AdaKV, KVQuant, DynamicKV) but pending GPU validation against `meta-llama/Llama-3.1-8B`. KVQuant additionally requires the user to run upstream's offline calibration (Fisher info + NUQ codebook) once per bitwidth before its runner can produce useful labels — see `backends/runners/kvquant_env/README.md`.
 3. `signals.head_variance` uses cross-head variance of mean peak attention probability as the heterogeneity statistic — the design doc doesn't pin this down, and `tau_head_var` calibration depends on it. Re-tune the threshold against real signals before any production labeling run.
 4. The classifier trainer.
 

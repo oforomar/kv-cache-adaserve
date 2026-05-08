@@ -36,29 +36,15 @@ uv run --project backends/runners/kvquant_env python backends/runners/run_kvquan
 
 ## Status
 
-- **`run_adakv.py`** — implemented. Uses upstream `replace_llama_adaptive` + `config_compress`; two-step perplexity (prefill prompt → score target against post-eviction cache). Env: `backends/runners/adakv_env/` with `transformers==4.44.2` and the AdaKV submodule as an editable path source.
-- **`run_kvquant.py`** — skeleton; raises `NotImplementedError`.
-- **`run_dynamickv.py`** — skeleton; raises `NotImplementedError`.
+All three runners are implemented. Each has its own per-env README under `<name>_env/README.md` covering setup quirks specific to that backend.
 
-### Setting up the AdaKV env
+| Runner | Env | Notes |
+|---|---|---|
+| `run_adakv.py` | `adakv_env/` | `transformers==4.44.2`, AdaKV submodule as editable path source. Two-step perplexity (prefill prompt → score target against post-eviction cache). |
+| `run_kvquant.py` | `kvquant_env/` | KVQuant submodule as editable path source. **Requires offline pre-calibration** to produce a `quantizers.pickle` per bitwidth — see `kvquant_env/README.md`. |
+| `run_dynamickv.py` | `dynamickv_env/` | DynamicKV is not pip-installable; runner adds it to `sys.path` and stubs an upstream hardcoded `transformers_modules` import. |
 
-```bash
-# from repo root
-uv sync --project backends/runners/adakv_env
-
-# flash-attn must be built against the installed torch ABI:
-uv pip install --project backends/runners/adakv_env flash-attn --no-build-isolation
-```
-
-Then run a smoke check on a few prompts:
-
-```bash
-uv run --project backends/runners/adakv_env python backends/runners/run_adakv.py \
-    --model meta-llama/Llama-3.1-8B \
-    --prompts prompts.jsonl --out adakv.jsonl --base-capacity 1024
-```
-
-The `gqa_support=True` + `gqa_func="mean"` flags are baked in — required for Llama-3.1-8B (32 Q / 8 KV heads). To target a different model, adjust those defaults.
+flash-attn is required for DynamicKV (patches `flash_attention_2`'s forward) and recommended for the other two for speed. Each env's README documents the install step (`uv pip install flash-attn --no-build-isolation`).
 
 ## Production sequence (once the runners are real)
 
