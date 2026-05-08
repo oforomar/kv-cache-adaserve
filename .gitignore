@@ -9,9 +9,10 @@ uv.lock.lock
 # Pipeline outputs
 *.jsonl
 !**/fixtures/*.jsonl
+# validation run is committed under calib100/
+!calib100/*.jsonl
 *.pickle
 smoke/
-calib*/
 
 # Editor / OS
 .vscode/
