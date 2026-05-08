@@ -23,7 +23,7 @@ The decision is prefill-locked, not per-token. The four backends have incompatib
 Phase B labels were originally underspecified ("best quality/compression trade-off" is multi-objective). The pipeline uses a scalar score:
 
 ```
-score = -(ppl_strategy - ppl_baseline) - λ * (1 - cratio_strategy)
+score = -(ppl_strategy - ppl_baseline) + λ * (1 - cratio_strategy)
 ```
 
 where `cratio` is `compressed_bytes / fp16_bytes ∈ (0, 1]` and `λ` controls the quality/compression trade-off. Higher score is better; the label per prompt is `argmax_strategy(score)`. λ is the most consequential single number in the whole pipeline because it defines what "best" means. λ=1 weights one nat of perplexity loss equally with a unit of compression-ratio improvement, which roughly favors compression. λ=0.1 favors quality; λ=10 favors aggressive compression. The recommendation is to sweep λ ∈ {0.1, 1, 10} at labeling time, train three classifiers, and report the Pareto frontier rather than committing to one value.
@@ -324,7 +324,7 @@ The expensive pass. For every prompt:
        - Apply strategy (uniform across all layers).
        - Compute perplexity on the same continuation.
        - Compute compression ratio (compressed bytes / fp16 bytes).
-       - score(s) = -(ppl_s - ppl_baseline) - lambda * (1 - cratio_s)
+       - score(s) = -(ppl_s - ppl_baseline) + lambda * (1 - cratio_s)
   3. label = argmax score
   4. Emit one row per prompt to measurements.jsonl.
 
@@ -365,7 +365,7 @@ def score(ppl_baseline: float, ppl_strategy: float, cratio: float,
           lambda_compress: float) -> float:
     """Higher is better. cratio = compressed_bytes / fp16_bytes ∈ (0, 1]."""
     delta_ppl = ppl_strategy - ppl_baseline
-    return -delta_ppl - lambda_compress * (1.0 - cratio)
+    return -delta_ppl + lambda_compress * (1.0 - cratio)
 
 
 # ---------------------------------------------------------------------------

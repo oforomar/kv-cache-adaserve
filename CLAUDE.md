@@ -90,7 +90,7 @@ uv run python calibration/make_labels.py --signals signals.jsonl \
 ## Design decisions worth knowing before editing
 
 - **Per-prompt labels with layer-varying signals.** Each prompt gets one label, but emits one row per (prompt × layer). True per-layer labels would cost ~1700 GPU-hours and are not budgeted. The agreement rate between Phase A and Phase B on a held-out set is the diagnostic for whether per-prompt is sufficient (>80% agreement = yes; <50% = need real per-layer labels).
-- **λ in the scoring function** (`-(Δppl) - λ·(1 - cratio)`) is the most consequential single number. Recommendation is to sweep λ ∈ {0.1, 1, 10} and report the Pareto frontier rather than commit to one value. **Sign caveat**: the design doc's formula penalizes compression at high λ, but its accompanying text says high λ favors compression. Smoke-tested at λ=10 → highest-cratio strategy wins ~all prompts, confirming the formula reads "favor low compression at high λ". Either the formula sign or the description is wrong; `strategies.score()` follows the formula verbatim. Resolve before any production label run.
+- **λ in the scoring function** (`-(Δppl) + λ·(1 - cratio)`) is the most consequential single number. λ=0.1 favors quality, λ=10 favors aggressive compression. Recommendation is to sweep λ ∈ {0.1, 1, 10} and report the Pareto frontier rather than commit to one value.
 - **Phase A precedence is explicit, not a scoring function:** QAQ-capable → high head-variance → low entropy → high entropy + long ctx → high entropy + short ctx → default KVQuant 8b. Order matters; head-variance check fires first and dominates if `τ_head_var` is mis-tuned (the mock run hit 100% Ada-KV with the default threshold — see "Mock Validation Findings" in the design doc).
 - **Strategy is prefill-locked**, frozen for the rest of generation. Backends have incompatible memory layouts.
 - **Eager attention is required** for `collect_signals.py` — FlashAttention does not materialize attention weights.
@@ -103,8 +103,7 @@ uv run python calibration/make_labels.py --signals signals.jsonl \
 2. Per-backend runners under `backends/runners/` are skeletons (raise `NotImplementedError`). Each needs to be filled in against the corresponding upstream submodule's API and shipped with its own uv environment under `backends/runners/<name>_env/`. The runner outputs (`{prompt_id, ppl, cratio}` JSONL per strategy) plus baseline.jsonl drive `join_labels.py`, which is already implemented.
 3. `signals.head_variance` uses cross-head variance of mean peak attention probability as the heterogeneity statistic — the design doc doesn't pin this down, and `tau_head_var` calibration depends on it. Re-tune the threshold against real signals before any production labeling run.
 4. GQA: `head_variance` operates on Q-heads (post-repetition); the doc calls for KV-heads. With GQA models, group Q-heads by `num_key_value_groups` first.
-5. `score()` formula sign vs. description inconsistency (see λ note above). Decide before running.
-6. The classifier trainer.
+5. The classifier trainer.
 
 ## Conventions
 

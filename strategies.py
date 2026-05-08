@@ -35,7 +35,11 @@ def score(ppl_baseline: float, ppl_strategy: float, cratio: float,
           lambda_compress: float) -> float:
     """Higher is better. cratio = compressed_bytes / fp16_bytes ∈ (0, 1].
 
-    score = -(Δppl) - λ·(1 - cratio)
+    score = -(Δppl) + λ·(1 - cratio)
+
+    λ=0.1 favors quality, λ=10 favors aggressive compression. The
+    second term rewards smaller cratio (heavier compression); λ scales
+    how much we trade quality for that.
     """
     delta_ppl = ppl_strategy - ppl_baseline
-    return -delta_ppl - lambda_compress * (1.0 - cratio)
+    return -delta_ppl + lambda_compress * (1.0 - cratio)
