@@ -48,18 +48,35 @@ def _read_prompts(path: str) -> Iterable[dict]:
 
 
 def _stub_internlm_module() -> None:
-    """Pre-empt DynamicKV's hardcoded `transformers_modules.<...>` import.
+    """Pre-empt DynamicKV's hardcoded `transformers_modules.<...>` access.
 
-    Upstream `monkeypatch.py` imports an InternLM-specific transformers
-    module at the top level, even when only the Llama path is exercised.
-    Provide an empty stub so the import succeeds; the InternLM branch of
-    `replace_attention()` is never taken in this runner.
+    Upstream `monkeypatch.py` (a) imports an InternLM-specific transformers
+    module at the top level, and (b) — separately — the `replace_attention`
+    function unconditionally sets `prepare_inputs_for_generation` on
+    InternLM2ForCausalLM regardless of the requested `model_type`. Provide
+    a stub module with the two attributes the assignments touch
+    (`InternLM2FlashAttention2`, `InternLM2ForCausalLM`) so both paths
+    succeed without an InternLM model in the cache.
     """
     parent = "transformers_modules"
     sub = f"{parent}.internlm2_5_7b_chat_1m"
     leaf = f"{sub}.modeling_internlm2"
-    for name in (parent, sub, leaf):
+    for name in (parent, sub):
         sys.modules.setdefault(name, types.ModuleType(name))
+    if leaf not in sys.modules:
+        m = types.ModuleType(leaf)
+
+        class _Stub:
+            forward = None
+            prepare_inputs_for_generation = None
+        m.InternLM2FlashAttention2 = _Stub
+        m.InternLM2ForCausalLM = _Stub
+        sys.modules[leaf] = m
+    # Make `import transformers_modules.internlm2_5_7b_chat_1m.modeling_internlm2`
+    # resolve via the parent's attribute lookup too.
+    setattr(sys.modules[parent], "internlm2_5_7b_chat_1m",
+            sys.modules[sub])
+    setattr(sys.modules[sub], "modeling_internlm2", sys.modules[leaf])
 
 
 def _ensure_dynamickv_on_path() -> None:
@@ -76,6 +93,31 @@ def _ensure_dynamickv_on_path() -> None:
         sys.path.insert(0, str(dynamickv_path))
 
 
+def _shim_flash_attention_forward() -> None:
+    """transformers 4.44 moved `_flash_attention_forward` off the
+    LlamaFlashAttention2 class to a module-level helper that takes an
+    explicit `is_causal` argument. DynamicKV's patched forward still calls
+    it as `self._flash_attention_forward(...)` without is_causal. Add a
+    method-form shim that delegates to the new helper.
+    """
+    from transformers.models.llama.modeling_llama import LlamaFlashAttention2
+    from transformers.modeling_flash_attention_utils import _flash_attention_forward
+
+    if hasattr(LlamaFlashAttention2, "_flash_attention_forward"):
+        return
+
+    def _shim(self, query_states, key_states, value_states, attention_mask,
+              query_length, dropout=0.0, softmax_scale=None, **kwargs):
+        return _flash_attention_forward(
+            query_states, key_states, value_states, attention_mask,
+            query_length,
+            is_causal=getattr(self, "is_causal", True),
+            dropout=dropout, softmax_scale=softmax_scale, **kwargs,
+        )
+
+    LlamaFlashAttention2._flash_attention_forward = _shim
+
+
 def _load_dynamickv_llama(model_name: str, max_capacity_prompt: int,
                           window_size: int, kernel_size: int, pooling: str,
                           radio_max: int, device: str):
@@ -87,6 +129,7 @@ def _load_dynamickv_llama(model_name: str, max_capacity_prompt: int,
     from kv_compression.token_drop.monkeypatch import replace_attention
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    _shim_flash_attention_forward()
     replace_attention(model_type="llama", method="dynamickv_v11")
 
     tok = AutoTokenizer.from_pretrained(model_name)

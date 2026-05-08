@@ -84,11 +84,17 @@ def _load_adakv_llama(model_name: str, base_capacity: int,
 
 def _perplexity_evicted(model, tok, prompt_text: str, target_text: str,
                         max_length: int, device: str) -> tuple[float, int]:
-    """Two-step perplexity: prefill the prompt (eviction fires), then score
-    the target tokens against the post-eviction KV cache.
+    """Token-by-token decode after prefill. AdaKV's flattened post-eviction
+    K/V layout means we can't easily bulk-decode the target tokens with
+    `past_key_values=...` (rank-2 vs rank-4 mismatch). Token-by-token decode
+    keeps things working but inflates ppl: AdaKV may re-evict per decode
+    step, which is *not* the upstream eval shape (`model.generate`). The
+    resulting numbers are not directly comparable to baseline. **Known
+    issue tracked in TASKS.md** — proper fix is using `model.generate` with
+    log-prob extraction or a custom hook that freezes eviction after the
+    first prefill.
 
-    Returns (ppl, prompt_len_tokens). prompt_len is what AdaKV saw before
-    eviction — used to compute cratio per prompt.
+    Returns (ppl, prompt_len_tokens).
     """
     import torch
     import torch.nn.functional as F
@@ -100,21 +106,17 @@ def _perplexity_evicted(model, tok, prompt_text: str, target_text: str,
     target_ids = tok(
         target_text, return_tensors="pt", add_special_tokens=False,
     ).input_ids.to(device)
-
     prompt_len = int(prompt_ids.shape[1])
 
     with torch.inference_mode():
-        # Prefill: eviction happens inside the patched attention forward
-        # when seq_len exceeds base_capacity.
         out = model(input_ids=prompt_ids, use_cache=True)
         past = out.past_key_values
-        # Last logit of prefill predicts the first target token.
         prev_logits = out.logits[:, -1:, :]
 
         nll_terms: list[torch.Tensor] = []
         for t in range(target_ids.shape[1]):
             tok_id = target_ids[:, t:t + 1]
-            log_probs = F.log_softmax(prev_logits, dim=-1)
+            log_probs = F.log_softmax(prev_logits.float(), dim=-1)
             nll_terms.append(-log_probs.gather(-1, tok_id.unsqueeze(-1)).squeeze())
 
             if t < target_ids.shape[1] - 1:

@@ -29,9 +29,12 @@ def attention_entropy(weights: torch.Tensor) -> torch.Tensor:
 
     weights: [B, H, q, k] from an HF attention module with output_attentions=True.
     Returns a [B, H, q] tensor; callers typically `.mean()` to a scalar.
+
+    Cast to fp32 first: fp16's smallest subnormal is ~6e-8, so a 1e-12
+    clamp underflows to 0 there and propagates NaN through `0 * log(0)`.
     """
     eps = 1e-12
-    p = weights.clamp_min(eps)
+    p = weights.float().clamp_min(eps)
     return -(p * p.log()).sum(dim=-1)
 
 

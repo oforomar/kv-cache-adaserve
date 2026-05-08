@@ -47,18 +47,24 @@ def _index_by_pid(rows: list[dict]) -> dict[str, dict]:
 
 
 def join(baseline_path: str, strategy_paths: dict[str, str],
-         out_path: str, lambda_compress: float) -> tuple[int, int]:
+         out_path: str, lambda_compress: float,
+         allow_partial: bool = False) -> tuple[int, int]:
     baseline = _index_by_pid(_load_jsonl(baseline_path))
     strat_rows = {name: _index_by_pid(_load_jsonl(p))
                   for name, p in strategy_paths.items()}
 
     needed = {s.value for s in RUNTIME_STRATEGIES}
     missing_strats = needed - set(strat_rows)
-    if missing_strats:
+    if missing_strats and not allow_partial:
         raise SystemExit(
             f"missing per-strategy JSONLs for: {sorted(missing_strats)}. "
-            f"All four runtime strategies must be measured before joining."
+            f"All four runtime strategies must be measured before joining. "
+            f"Pass --allow-partial for smoke runs that intentionally cover "
+            f"a subset (label argmax will be over present strategies only)."
         )
+
+    # When allow_partial is set, argmax over whichever strategies were given.
+    strategies_in_use = [s for s in RUNTIME_STRATEGIES if s.value in strat_rows]
 
     n_written = 0
     n_skipped = 0
@@ -68,7 +74,7 @@ def join(baseline_path: str, strategy_paths: dict[str, str],
             num_layers = b.get("num_layers")
             scores: dict[str, dict[str, float]] = {}
             ok = True
-            for s in RUNTIME_STRATEGIES:
+            for s in strategies_in_use:
                 row = strat_rows[s.value].get(pid)
                 if row is None:
                     ok = False
@@ -118,10 +124,12 @@ if __name__ == "__main__":
                     help="NAME=PATH; repeat once per runtime strategy")
     ap.add_argument("--out", default="measurements.jsonl")
     ap.add_argument("--lambda-compress", type=float, default=1.0)
+    ap.add_argument("--allow-partial", action="store_true",
+                    help="Permit a subset of runtime strategies (smoke runs).")
     args = ap.parse_args()
 
     strategy_paths = dict(args.strategy)
     n, skipped = join(args.baseline, strategy_paths, args.out,
-                      args.lambda_compress)
+                      args.lambda_compress, allow_partial=args.allow_partial)
     print(f"wrote {n} measurement rows → {args.out}  (skipped {skipped} prompts "
           f"missing from one or more strategies)")

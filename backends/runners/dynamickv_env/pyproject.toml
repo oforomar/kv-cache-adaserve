@@ -7,7 +7,9 @@ dependencies = [
     # Pin torch to a stable cu121 release matching the system's nvcc 12.0.
     # See adakv_env/pyproject.toml for the full reasoning.
     "torch==2.5.1",
-    "transformers>=4.44,<4.46",   # upstream targets 4.44.x
+    # 4.45+ moved LlamaFlashAttention2._flash_attention_forward to a
+    # module-level helper; DynamicKV's patched forward calls it as a method.
+    "transformers>=4.44,<4.45",
     "accelerate>=0.33",
     "datasets>=2.20",
     "numpy>=1.24",

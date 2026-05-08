@@ -88,10 +88,39 @@ Open follow-ups (need GPU):
 
 ---
 
-## 5. End-to-end smoke run on a small prompt set
-**Status:** open · **Blocks:** committing 50 GPU-hours · **Effort:** ~hours, GPU
+## 5. End-to-end smoke run on a small prompt set — **PARTIAL DONE**
 
-Once #4 has at least one real backend, run the *whole* chain — collect_signals → score_baseline → run_<backend> → join_labels → make_labels — on ~50 prompts before the full 2000-prompt run. Goals: surface env-conflict bugs, verify JSONL formats line up across backends, confirm `join_labels` produces a sane label distribution.
+5-prompt smoke run on Llama-3.2-3B with AdaKV + DynamicKV (KVQuant skipped pending offline pre-calibration). Surfaced and fixed several real issues; the pipeline now runs end-to-end on this hardware.
+
+**Fixes that landed during the smoke run:**
+- `signals.attention_entropy` produced NaN in fp16 (`clamp_min(1e-12)` underflows to 0 there). Cast to fp32 before the clamp.
+- Per-runner-env tooling: the system Python 3.11 lacked `Python.h`; switched both runner envs to a uv-managed Python 3.11 install. Also pinned `torch==2.5.1+cu121` so prebuilt flash-attn wheels exist (the auto-resolved torch 2.11+cu130 had no wheel for our cp311 + nvcc 12 combo). flash-attn URL-pinned in both envs.
+- AdaKV's custom CUDA extension (`tiny_api_cuda` from `backends/adakv/csrc`) required a separate `python build.py install` run. Built cleanly against `CUDA_HOME=/usr` with the system nvcc 12.0 + torch's cu121 bindings. Documented; one-time build per env.
+- DynamicKV's runner needed two compatibility shims:
+  - The InternLM stub now exposes `InternLM2FlashAttention2` and `InternLM2ForCausalLM` classes, since `replace_attention()` assigns to those unconditionally regardless of `model_type`.
+  - `_flash_attention_forward` was a method on `LlamaFlashAttention2` in older transformers but was moved to a module-level helper in 4.44+. The runner adds a method-form shim that delegates to the new helper.
+- `join_labels.py` now has `--allow-partial` for smoke runs that intentionally cover a subset of strategies.
+
+**Smoke results:** 5 wikitext-short prompts, base_capacity=128, max_capacity_prompt=128:
+
+| Stage | Output |
+|---|---|
+| baseline (FP16) | ppl 8.1, 14.0, 18.5 (≈), ?, 11.8 |
+| DynamicKV | ppl 8.1, 14.0, 16.3, 23.9, 11.8 — healthy (~baseline) |
+| AdaKV | ppl 137, 206, 557, 429, 187 — **inflated** (see below) |
+| join_labels | 5 measurements, argmax = dynamickv for all 5 |
+| make_labels | 100 training rows with the trainer-expected schema |
+
+**Known issue: AdaKV perplexity is way above baseline at any base_capacity.** AdaKV's API is built around `model.generate()` with internal cache state; teacher-forced perplexity via prompt-prefill + token-by-token decode causes per-step re-evictions on its flattened post-eviction layout. Bulk-decoding the target via `past_key_values=...` doesn't work because the post-eviction K/V tensor is rank-2 (flattened) rather than rank-4. **The runner produces JSONL — pipeline is unblocked — but AdaKV's ppl numbers are not a valid measurement of its quality.** Fix options: use `model.generate()` with log-prob extraction, or freeze AdaKV's eviction after the first prefill via a hook. Tracked separately as task 5b below.
+
+## 5b. Fix AdaKV teacher-forced perplexity
+**Status:** open · **Effort:** half-day
+
+AdaKV's design assumes one prefill + autoregressive generation, not teacher-forcing. Two paths:
+- `model.generate()` with `output_scores=True` to extract per-token log-probs of the target sequence — requires injecting the target tokens as `decoder_input_ids` or using `forced_decoder_ids`.
+- Hook into AdaKV's eviction trigger to fire only on the first prefill, then run a normal teacher-forced second forward.
+
+Until this is fixed, AdaKV will lose every per-prompt argmax (its score is wildly negative).
 
 ---
 
